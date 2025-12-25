@@ -60,9 +60,15 @@
         </select>
     </div>
 
-
-    <script src='./src/index.js'></script>
-
+    <script src="https://unpkg.com/gl-matrix@3.4.3/gl-matrix-min.js"></script>
+    <script>
+        const { mat4, vec3, vec2, vec4, quat } = glMatrix;
+    </script>
+    <script src="./src/loader/minimal-gltf-loader.js"></script>
+    <script src="./src/shaders/shader.js"></script>
+    <script src="./src/utils/utils.js"></script>
+    <script src='./src/main.js'></script>
+    
 </body>
 
 </html>

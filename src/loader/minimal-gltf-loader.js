@@ -1,5 +1,3 @@
-import {vec3, vec4, quat, mat4} from 'gl-matrix';
-
 var MinimalGLTFLoader = MinimalGLTFLoader || {};
 
 var globalUniformBlockID = 0;
@@ -1263,4 +1261,3 @@ function _loadImage(url, iid, onload) {
 }
 
 // export { MinimalGLTFLoader };
-export { glTFLoader };
