@@ -10,6 +10,9 @@ function createSceneResources(gl) {
   gl.samplerParameteri(defaultSampler, gl.TEXTURE_WRAP_S, gl.REPEAT);
   gl.samplerParameteri(defaultSampler, gl.TEXTURE_WRAP_T, gl.REPEAT);
 
+  // ---------- QUAD ----------
+  const quadScreen = createFullscreenQuad(gl);
+
   // ---------- BBOX ----------
   const bbox = createBoundingBox(gl);
 
@@ -286,8 +289,10 @@ function createSceneResources(gl) {
           if (material.normalTexture) prim.shader.defineMacro("HAS_NORMALMAP");
           if (material.occlusionTexture) prim.shader.defineMacro("HAS_OCCLUSIONMAP");
           if (material.emissiveTexture) prim.shader.defineMacro("HAS_EMISSIVEMAP");
+          if (material.extensions?.KHR_materials_transmission) {
+            prim.shader.defineMacro("HAS_TRANSMISSION");
+          }
         }
-
         prim.shader.compile();
       }
     }
@@ -297,6 +302,7 @@ function createSceneResources(gl) {
 
   return {
     defaultSampler,
+    quadScreen,
     bbox,
     brdfLut,
     cubemap,
@@ -304,8 +310,52 @@ function createSceneResources(gl) {
   };
 }
 
-// ------- Helpers: bbox / cubemap -------
+function createFullscreenQuad(gl) {
+  const obj = {
+    vertexData: new Float32Array([
+      -1, -1,
+       1, -1,
+      -1,  1,
+      -1,  1,
+       1, -1,
+       1,  1
+    ]),
+    vertexArray: gl.createVertexArray(),
+    vertexBuffer: gl.createBuffer(),
+    program: Utils.createProgram(gl, Shaders.quadVert, Shaders.quadFrag),
+    positionLocation: 0,
+    textureIndex: 28,
+    uniformTextureLocation: null,
+  };
+  
+  obj.uniformTextureLocation = gl.getUniformLocation(obj.program, "u_Texture");
 
+  gl.bindVertexArray(obj.vertexArray);
+  gl.bindBuffer(gl.ARRAY_BUFFER, obj.vertexBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, obj.vertexData, gl.STATIC_DRAW);
+  gl.vertexAttribPointer(obj.positionLocation, 2, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(obj.positionLocation);
+  gl.bindVertexArray(null);
+
+  // draw 함수 추가
+  obj.draw = function(texture) {
+    gl.useProgram(this.program);
+    gl.clearColor(0, 0, 0, 1);
+
+    gl.activeTexture(gl.TEXTURE0 + this.textureIndex);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.uniform1i(this.uniformTextureLocation, this.textureIndex);
+    
+    gl.bindVertexArray(this.vertexArray);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    gl.bindVertexArray(null);
+  };
+
+  return obj;
+}
+
+
+// ------- Helpers: bbox / cubemap -------
 function createBoundingBox(gl) {
   const obj = {
     vertexData: new Float32Array([

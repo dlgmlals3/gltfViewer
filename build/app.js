@@ -5622,12 +5622,6 @@ var Utils = Utils || {};
     // gl.samplerParameteri(defaultSampler, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL);
 
 
-
-
-
-
-
-
     BOUNDING_BOX.uniformMvpLocation = gl.getUniformLocation(BOUNDING_BOX.program, "u_MVP");
 
     gl.bindVertexArray(BOUNDING_BOX.vertexArray);
@@ -5846,7 +5840,7 @@ var Utils = Utils || {};
                 gl.activeTexture(gl.TEXTURE0 + this.textureIndex);
                 gl.bindTexture(gl.TEXTURE_CUBE_MAP, this.texture);
                 gl.uniformMatrix4fv(this.uniformMvpLocation, false, MVP);
-                gl.uniform1i(this.uniformEnvironmentLocation, this.textureIndex);
+                gl.uniform1i(this.uniformEnvironmentLocation, this.textureInd1ex);
                 gl.bindVertexArray(this.vertexArray);
                 gl.drawArrays(gl.TRIANGLES, 0, 36);
                 gl.bindVertexArray(null);

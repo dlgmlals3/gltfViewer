@@ -409,7 +409,8 @@
             HAS_NORMALMAP: 8,
             HAS_METALROUGHNESSMAP: 16,
             HAS_OCCLUSIONMAP: 32,
-            HAS_EMISSIVEMAP: 64
+            HAS_EMISSIVEMAP: 64,
+            HAS_TRANSMISSION: 128
         },
 
         vsMasterCode: Shaders.pbrVert,

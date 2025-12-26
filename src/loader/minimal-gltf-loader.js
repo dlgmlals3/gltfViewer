@@ -358,7 +358,11 @@ var Primitive = MinimalGLTFLoader.Primitive = function (gltf, p) {
 
 
     this.material = p.material !== undefined ? gltf.materials[p.material] : null;
-
+    // 디버깅
+    if (this.material) {
+        console.log("Primitive material:", this.material.name);
+        console.log("  extensions:", this.material.extensions);
+    }
 
     this.mode = p.mode !== undefined ? p.mode : 4; // default: gl.TRIANGLES
 
@@ -523,6 +527,7 @@ var Material = MinimalGLTFLoader.Material = function (m) {
     this.alphaCutoff = m.alphaCutoff !== undefined ? m.alphaCutoff : 0.5;
     this.doubleSided = m.doubleSided || false;
 
+    // dlgmlals3
     this.extensions = m.extensions !== undefined ? m.extensions : null;
     this.extras = m.extras !== undefined ? m.extras : null;
 };

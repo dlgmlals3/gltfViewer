@@ -41,8 +41,7 @@ function createRenderer(gl, resources) {
       node.updateMatrixFromTRS();
     }
   }
-
-  // dlgmlals3
+  
   function drawPrimitive(ctx, curScene, primitive, matrix, skinOrNull) {
     const { modelView, isFaceCullingState } = ctx;
 
@@ -69,30 +68,30 @@ function createRenderer(gl, resources) {
       programObj = nextProgramObj;
       gl.useProgram(programObj.program);
     }
-
+    
     // material bind
     const defaultColor = [1, 1, 1, 1];
     let baseColor = defaultColor;
-
+    
     if (material) {
       const pbr = material.pbrMetallicRoughness;
       baseColor = pbr.baseColorFactor;
-
+      
       if (shader.hasBaseColorMap()) {
-        activeAndBindTexture(curScene, programObj.uniformLocations.baseColorTexture, pbr.baseColorTexture);
+        activeAndBindTexture(curScene, programObj.uniformLocations.baseColorTexture, pbr.baseColorTexture);        
       }
 
       if (shader.hasNormalMap()) {
         activeAndBindTexture(curScene, programObj.uniformLocations.normalTexture, material.normalTexture);
-        gl.uniform1f(programObj.uniformLocations.normalTextureScale, material.normalTexture.scale);
+        gl.uniform1f(programObj.uniformLocations.normalTextureScale, material.normalTexture.scale);        
       }
 
       if (shader.hasMetalRoughnessMap()) {
-        activeAndBindTexture(curScene, programObj.uniformLocations.metallicRoughnessTexture, pbr.metallicRoughnessTexture);
+        activeAndBindTexture(curScene, programObj.uniformLocations.metallicRoughnessTexture, pbr.metallicRoughnessTexture);        
       }
 
       gl.uniform1f(programObj.uniformLocations.metallicFactor, pbr.metallicFactor);
-      gl.uniform1f(programObj.uniformLocations.roughnessFactor, pbr.roughnessFactor);
+      gl.uniform1f(programObj.uniformLocations.roughnessFactor, pbr.roughnessFactor);      
 
       if (shader.hasOcclusionMap()) {
         activeAndBindTexture(curScene, programObj.uniformLocations.occlusionTexture, material.occlusionTexture);
@@ -151,8 +150,22 @@ function createRenderer(gl, resources) {
     gl.bufferSubData(gl.UNIFORM_BUFFER, 0, skin.jointMatrixUnidormBufferData, 0, skin.jointMatrixUnidormBufferData.length);
   }
 
-  // dlgmlals3
-  function drawNode(ctx, scene, node, nodeID, nodeMatrix, parentModelMatrix) {
+  function getTransmissionFactor(prim) {
+    const m = prim.material;
+    if (!m) return { factor: 0.0, texture: null };
+    
+    //console.log("dlgmlals4 " + JSON.stringify(m));
+    
+    const t = m.extensions?.KHR_materials_transmission;
+    if (t && (t.transmissionFactor ?? 0) > 0) {
+      return {
+        factor: t.transmissionFactor, texture: t.transmissionTexture,
+      };
+    }
+    return { factor: 0.0, texture: null };    
+  }
+
+  function drawNode(pass, ctx, scene, node, nodeID, nodeMatrix, parentModelMatrix) {
     const matrix = nodeMatrix[nodeID];
 
     if (parentModelMatrix) {
@@ -168,6 +181,12 @@ function createRenderer(gl, resources) {
 
     if (node.mesh) {
       for (const prim of node.mesh.primitives) {
+        const tf = getTransmissionFactor(prim);
+        
+        const isTrans = tf.factor > 0.0001;                
+        if (pass === "opaque" && isTrans) continue;
+        if (pass === "transmission" && !isTrans) continue;
+
         drawPrimitive(ctx, scene, prim, matrix, node.skin || null);
       }
     }
@@ -177,13 +196,11 @@ function createRenderer(gl, resources) {
     } 
 
     for (const child of node.children) {
-      drawNode(ctx, scene, child, child.nodeID, nodeMatrix, matrix);
+      drawNode(pass, ctx, scene, child, child.nodeID, nodeMatrix, matrix);
     }
   }
-
-  // dlgmlals3
-  // extension 추가하는 방법
-  function drawScene(ctx, scene) {
+  
+  function drawScene(pass, ctx, scene) {
     const { timeParameter, curAnimationId, playAllAnimationTogether } = ctx;
     const glTF = scene.glTF;
 
@@ -201,7 +218,7 @@ function createRenderer(gl, resources) {
     }
 
     for (const root of scene.glTFScene.nodes) {
-      drawNode(ctx, scene, root, root.nodeID, scene.nodeMatrix, scene.rootTransform);
+      drawNode(pass, ctx, scene, root, root.nodeID, scene.nodeMatrix, scene.rootTransform);
     }
   }
 
@@ -241,29 +258,91 @@ function createRenderer(gl, resources) {
     gl.bindVertexArray(null);
   }
 
+  let opaqueFBO = null;
+  let opaqueColorTex = null;
+  let opaqueDepthRb = null;
+  let fboW = 0, fboH = 0;  
+
+  function generateFBO(width, height) {
+      if (opaqueFBO && fboW === width && fboH === height) return;
+
+      if (opaqueColorTex) gl.deleteTexture(opaqueColorTex);
+      if (opaqueDepthRb) gl.deleteRenderbuffer(opaqueDepthRb);
+      if (opaqueFBO) gl.deleteFramebuffer(opaqueFBO);
+
+      fboW = width; fboH = height;
+
+      opaqueFBO = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, opaqueFBO);
+
+      opaqueColorTex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, opaqueColorTex);
+      // 수정: sized format 대신 unsized format 사용
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); // LINEAR → NEAREST
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, opaqueColorTex, 0);
+
+      opaqueDepthRb = gl.createRenderbuffer();
+      gl.bindRenderbuffer(gl.RENDERBUFFER, opaqueDepthRb);
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, width, height);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, opaqueDepthRb);
+
+      const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+      if (status !== gl.FRAMEBUFFER_COMPLETE) {
+        console.error("Opaque FBO incomplete:", status.toString(16));
+        return; // 실패 시 중단
+      } else {
+        console.log("generate FBO complete");
+      }
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
   function render(ctx) {
+    mat4.mul(VP, perspective, ctx.modelView);  
+    const width = ctx.width | 0;
+    const height = ctx.height | 0;    
+
+    generateFBO(width, height);
+
+    gl.viewport(0, 0, width, height);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, opaqueFBO);
+
+    gl.viewport(0, 0, width, height);
+    gl.disable(gl.BLEND);
+    gl.enable(gl.DEPTH_TEST);    
     gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-    // VP = P * V
-    mat4.mul(VP, perspective, ctx.modelView);
-
-    // --- Pass 1: PBR ---
+    
+    // 1. opaque rendering
+    // opaque에서는 transmission 프리미티브는 skip 되어있어야 함.
+    resources.cubemap.draw(ctx.modelView, perspective);
     for (const scene of ctx.scenes) {
-      drawScene(ctx, scene);
+      drawScene("opaque", ctx, scene);
     }
+    
+    // 2. opaque texture to main
+    
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.CULL_FACE);
+    gl.disable(gl.BLEND);
+    gl.disable(gl.SCISSOR_TEST);
+    resources.quadScreen.draw(opaqueColorTex);      
 
-    // --- Pass 2: BBox ---
+    
+    gl.viewport(0, 0, width, height);
     if (ctx.drawBoundingBox) {
       for (const scene of ctx.scenes) {
         drawSceneBBox(ctx, scene);
       }
     }
 
-    // --- Pass 3: Skybox ---
-    resources.cubemap.draw(ctx.modelView, perspective);
-
     programObj = null;
+    
   }
 
   return { render, setPerspective };
