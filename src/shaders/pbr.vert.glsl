@@ -13,6 +13,7 @@ precision highp int;
 uniform mat4 u_MVP;
 uniform mat4 u_MV;
 uniform mat4 u_MVNormal;
+uniform mat4 u_Model;
 
 #ifdef HAS_SKIN
 uniform JointMatrix
@@ -42,7 +43,8 @@ layout(location = WEIGHTS_1_LOCATION) in vec4 weight1;
 // out vec3 v_bitangentW;
 // #endif
 
-
+out vec3 v_worldPosition;
+out vec3 v_worldNormal;
 out vec3 v_position;
 out vec3 v_normal;
 out vec2 v_uv;
@@ -69,15 +71,15 @@ void main()
 
 #ifdef HAS_SKIN
     v_normal = normalize(( u_MVNormal * transpose(inverse(skinMatrix)) * vec4(normal, 0)).xyz);
-    vec4 pos = u_MV * skinMatrix * vec4(position, 1.0);
+    v_worldNormal = normalize((u_ModelNormal * transpose(inverse(skinMatrix)) * vec4(normal, 0.0)).xyz);
+    v_worldPosition = vec3(u_Model * skinMatrix * vec4(position, 1.0));
+    vec4 pos = u_MV * skinMatrix * vec4(position, 1.0);    
     gl_Position = u_MVP * skinMatrix * vec4(position, 1.0);
 #else
     v_normal = normalize((u_MVNormal * vec4(normal, 0)).xyz);
-    vec4 pos = u_MV * vec4(position, 1.0);
+    v_worldPosition = vec3(u_Model * vec4(position, 1.0));
+    vec4 pos = u_MV * vec4(position, 1.0);    
     gl_Position = u_MVP * vec4(position, 1.0);
 #endif
-
     v_position = vec3(pos.xyz) / pos.w;
-    
-    
 }

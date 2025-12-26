@@ -181,6 +181,8 @@
 
 	renderer.render({
 	  scenes,
+	  width: canvas.width,
+	  height: canvas.height,
 	  modelView,
 	  drawBoundingBox,
 	  boundingBoxType,

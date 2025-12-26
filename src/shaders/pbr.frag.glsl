@@ -43,6 +43,20 @@ uniform sampler2D u_occlusionTexture;
 uniform float u_occlusionStrength;
 #endif
 
+// transmission
+#ifdef HAS_TRANSMISSION
+uniform sampler2D u_transmissionFramebuffer;
+uniform float u_transmissionFactor;
+uniform vec2 u_viewportSize;
+uniform mat4 u_ViewMatrix;
+uniform mat4 u_ProjectionMatrix;
+uniform mat4 u_ModelMatrix;
+#ifdef HAS_TRANSMISSION_TEXTURE
+uniform sampler2D u_transmissionTexture;
+#endif
+#endif
+
+in vec3 v_worldPosition;
 in vec3 v_position;
 in vec3 v_normal;
 in vec2 v_uv;
@@ -65,49 +79,19 @@ struct PBRInfo
     vec3 specularColor;           // color contribution from specular lighting
 };
 
-
-// vec3 applyNormalMap(vec3 geomnor, vec3 normap) {
-//     normap = normap * 2.0 - 1.0;
-//     vec3 up = normalize(vec3(0.01, 1, 0.01));
-//     vec3 surftan = normalize(cross(geomnor, up));
-//     vec3 surfbinor = cross(geomnor, surftan);
-//     return normap.y * surftan * u_normalTextureScale + normap.x * surfbinor * u_normalTextureScale + normap.z * geomnor;
-// }
-
 const float M_PI = 3.141592653589793;
 const float c_MinRoughness = 0.04;
-
-
-// vec3 getNormal()
-// {
-
-// #ifdef HAS_NORMALMAP
-// #ifdef HAS_TANGENTS
-//     vec3 n = texture(u_normalTexture, v_uv).rgb;
-//     n = normalize(v_TBN * (2.0 * n - 1.0) - vec3(u_normalTextureScale, u_normalTextureScale, 1.0));
-// #else
-//     vec3 n = applyNormalMap( v_normal, texture(u_normalTexture, v_uv).rgb );
-// #endif
-// #else
-//     vec3 n = v_normal;
-// #endif
-//     return n;
-
-// #endif
-// }
 
 // Find the normal for this fragment, pulling either from a predefined normal map
 // or from the interpolated mesh normal and tangent attributes.
 vec3 getNormal()
 {
-
 // #ifdef HAS_NORMALMAP
 //     vec3 n = applyNormalMap( v_normal, texture(u_normalTexture, v_uv).rgb );
 // #else
 //     vec3 n = v_normal;
 // #endif
 //     return n;
-
 
     // Retrieve the tangent space matrix
 // #ifndef HAS_TANGENTS
@@ -139,11 +123,61 @@ vec3 getNormal()
 #else
     vec3 n = tbn[2].xyz;
 #endif
-
     return n;
 }
 
-vec3 getIBLContribution(PBRInfo pbrInputs, vec3 n, vec3 reflection)
+#ifdef HAS_TRANSMISSION
+vec3 getVolumeTransmissionRay(vec3 n, vec3 v, float thickness, float ior, mat4 modelMatrix)
+{
+    // Direction of refracted light.
+    vec3 refractionVector = refract(-v, normalize(n), 1.0 / ior);
+
+    // Compute rotation-independent scaling of the model matrix.
+    vec3 modelScale;
+    modelScale.x = length(vec3(modelMatrix[0].xyz));
+    modelScale.y = length(vec3(modelMatrix[1].xyz));
+    modelScale.z = length(vec3(modelMatrix[2].xyz));
+
+    // The thickness is specified in local space.
+    return normalize(refractionVector) * thickness * modelScale;
+}
+
+float applyIorToRoughness(float roughness, float ior)
+{
+    // Scale roughness with IOR so that an IOR of 1.0 results in no microfacet refraction and
+    // an IOR of 1.5 results in the default amount of microfacet refraction.
+    return roughness * clamp(ior * 2.0 - 2.0, 0.0, 1.0);
+}
+
+// dlgmlals3
+vec3 getIBLVolumeRefraction(PBRInfo pbrInputs, vec3 n, vec3 v, vec3 position, mat4 modelMatrix, vec4 baseColor)
+{
+    //ior = 1.0 → 굴절 없음 (공기)
+    //ior = 1.5 → 약간 굴절 (유리)
+    //ior = 2.4 → 많이 굴절 (다이아몬드)
+    float ior = 1.5;
+    float thickness = 0.02;  // 일단 0으로 (얇은 판 가정)
+    float roughness = pbrInputs.perceptualRoughness;
+    
+    // Step 1: 굴절 ray 계산
+    vec3 transmissionRay = getVolumeTransmissionRay(n, v, thickness, ior, modelMatrix);    
+    // Step 2: Exit point
+    vec3 refractedRayExit = position + transmissionRay;
+    
+    // Step 3: World → Screen UV
+    vec4 ndcPos = u_ProjectionMatrix * u_ViewMatrix * vec4(refractedRayExit, 1.0);
+    vec2 refractionCoords = ndcPos.xy / ndcPos.w;
+    refractionCoords = refractionCoords * 0.5 + 0.5;
+    
+    // Step 4: Opaque texture 샘플링
+    float framebufferLod = log2(u_viewportSize.x) * applyIorToRoughness(roughness, ior);
+    vec3 transmittedLight = textureLod(u_transmissionFramebuffer, refractionCoords, framebufferLod).rgb;
+    
+    return transmittedLight * baseColor.rgb;
+}
+#endif
+
+vec3 getIBLContribution(PBRInfo pbrInputs, vec3 n, vec3 reflection, vec4 baseColor)
 {
     // float mipCount = 9.0; // resolution of 512x512
     // float mipCount = 10.0; // resolution of 1024x1024
@@ -166,7 +200,34 @@ vec3 getIBLContribution(PBRInfo pbrInputs, vec3 n, vec3 reflection)
     // diffuse *= u_ScaleIBLAmbient.x;
     // specular *= u_ScaleIBLAmbient.y;
 
-    return diffuse + specular;
+    vec3 ret = vec3(0.0);
+
+#ifdef HAS_TRANSMISSION    
+    float transmissionFactor = u_transmissionFactor;
+    #ifdef HAS_TRANSMISSION_TEXTURE
+        transmissionFactor *= texture(u_transmissionTexture, v_uv).r;
+    #endif
+    // metallic에서는 tranmission이 일어나지 않음
+    transmissionFactor *= (1.0 - pbrInputs.metalness);
+    
+    if (transmissionFactor > 0.001) {        
+        vec3 position = v_worldPosition;      // world
+        mat3 viewToWorld = mat3(inverse(u_ViewMatrix));
+        vec3 vView  = normalize(-v_position);        // view: surface -> camera
+        vec3 vWorld = normalize(viewToWorld * vView); // world
+        
+        vec3 n = getNormal();  // view space
+        vec3 nWorld = normalize(viewToWorld * n);
+        
+        vec3 transmissionColor = getIBLVolumeRefraction(pbrInputs, nWorld, vWorld, position, u_ModelMatrix, baseColor);
+        
+        diffuse = mix(diffuse, transmissionColor, transmissionFactor);
+        //ret = vec3(transmissionFactor, transmissionFactor, transmissionFactor);;
+    }
+#endif
+    ret = diffuse + specular;
+    
+    return ret;
 }
 
 // Basic Lambertian diffuse
@@ -212,11 +273,6 @@ float microfacetDistribution(PBRInfo pbrInputs)
     return roughnessSq / (M_PI * f * f);
 }
 
-
-
-
-
-
 void main()
 {
     float perceptualRoughness = u_roughnessFactor;
@@ -242,8 +298,6 @@ void main()
 #else
     vec4 baseColor = u_baseColorFactor;
 #endif
-
-
 
     vec3 f0 = vec3(0.04);
     vec3 diffuseColor = baseColor.rgb * (vec3(1.0) - f0);
@@ -304,7 +358,7 @@ void main()
 
     // Calculate lighting contribution from image based lighting source (IBL)
 // #ifdef USE_IBL
-    color += getIBLContribution(pbrInputs, n, reflection);
+    color += getIBLContribution(pbrInputs, n, reflection, baseColor);
 // #endif
 
 

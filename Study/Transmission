@@ -1,0 +1,33 @@
+1.
+transmission diffuse 에 baseColor 곱해주기.
+2.
+Transmission roughness 하려면 mipmap 켜고 lod를 통해서 블러 효과를 줌.
+float framebufferLod = log2(float(u_TransmissionFramebufferSize.x)) * applyIorToRoughness(roughness, ior);
+vec3 transmittedLight = textureLod(u_TransmissionFramebufferSampler, fragCoord.xy, framebufferLod).rgb;
+
+vec3 c = textureLod(tex, uv, lod).rgb;
+이 uv에서 직접 lod 레벨을 지정해서 그 해상도의 텍스처를 읽어라”
+lod 값	선택되는 mip	해상도
+0.0	LOD 0	1024 × 1024 (원본)
+1.0	LOD 1	512 × 512
+2.0	LOD 2	256 × 256
+3.0	LOD 3	128 × 128
+4.0	LOD 4	64 × 64
+5.0	LOD 5	32 × 32
+LOD가 커질수록 → 더 작은 mip
+maxMip = log2(textureSize), 1024 → log2(1024) = 10
+roughness는 0~1인데, lod는 0~N 이다
+lod = roughness * log2(textureSize);
+roughness	lod	    의미
+0.0	         0	    완전히 선명
+0.25	     2.5	살짝 흐림
+0.5          5   	절반 해상도
+0.75	    7.5	    꽤 흐림
+1.0	        10	    거의 단색
+
+
+3.
+metalic에서는 transmission이 일어나지 않음.
+
+pbr 공부를 좀 해야할듯....
+뷰어에 비해 테두리가 매끈한게 없음...

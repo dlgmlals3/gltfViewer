@@ -10,6 +10,9 @@ function createSceneResources(gl) {
   gl.samplerParameteri(defaultSampler, gl.TEXTURE_WRAP_S, gl.REPEAT);
   gl.samplerParameteri(defaultSampler, gl.TEXTURE_WRAP_T, gl.REPEAT);
 
+  // ---------- QUAD ----------
+  const quadScreen = createFullscreenQuad(gl);
+
   // ---------- BBOX ----------
   const bbox = createBoundingBox(gl);
 
@@ -43,6 +46,8 @@ function createSceneResources(gl) {
       HAS_METALROUGHNESSMAP: 16,
       HAS_OCCLUSIONMAP: 32,
       HAS_EMISSIVEMAP: 64,
+      HAS_TRANSMISSION: 128,
+      HAS_TRANSMISSION_TEXTURE: 256,
     },
     vsMasterCode: Shaders.pbrVert,
     fsMasterCode: Shaders.pbrFrag,
@@ -68,7 +73,8 @@ function createSceneResources(gl) {
   Shader.prototype.hasMetalRoughnessMap = function () { return this.flags & Shader_Static.bitMasks.HAS_METALROUGHNESSMAP; };
   Shader.prototype.hasOcclusionMap = function () { return this.flags & Shader_Static.bitMasks.HAS_OCCLUSIONMAP; };
   Shader.prototype.hasEmissiveMap = function () { return this.flags & Shader_Static.bitMasks.HAS_EMISSIVEMAP; };
-
+  Shader.prototype.hasTransmission = function () { return this.flags & Shader_Static.bitMasks.HAS_TRANSMISSION; };
+  Shader.prototype.hasTransmissionTexture = function () { return this.flags & Shader_Static.bitMasks.HAS_TRANSMISSION_TEXTURE; };
   Shader.prototype.compile = function () {
     const existing = Shader_Static.programObjects[this.flags];
     if (existing) {
@@ -87,6 +93,9 @@ function createSceneResources(gl) {
     if (this.flags & Shader_Static.bitMasks.HAS_METALROUGHNESSMAP) fsDefine += "#define HAS_METALROUGHNESSMAP\n";
     if (this.flags & Shader_Static.bitMasks.HAS_OCCLUSIONMAP) fsDefine += "#define HAS_OCCLUSIONMAP\n";
     if (this.flags & Shader_Static.bitMasks.HAS_EMISSIVEMAP) fsDefine += "#define HAS_EMISSIVEMAP\n";
+    if (this.flags & Shader_Static.bitMasks.HAS_TRANSMISSION) fsDefine += "#define HAS_TRANSMISSION\n";
+    if (this.flags & Shader_Static.bitMasks.HAS_TRANSMISSION_TEXTURE) fsDefine += "#define HAS_TRANSMISSION_TEXTURE\n";
+    
 
     const vertexShaderSource = Shader_Static.shaderVersionLine + vsDefine + Shader_Static.vsMasterCode;
     const fragmentShaderSource = Shader_Static.shaderVersionLine + fsDefine + Shader_Static.fsMasterCode;
@@ -107,16 +116,22 @@ function createSceneResources(gl) {
     us.MVP = gl.getUniformLocation(program, "u_MVP");
     us.MVNormal = gl.getUniformLocation(program, "u_MVNormal");
     us.MV = gl.getUniformLocation(program, "u_MV");
+    us.Model = gl.getUniformLocation(program, "u_Model");
+
     us.baseColorFactor = gl.getUniformLocation(program, "u_baseColorFactor");
     us.metallicFactor = gl.getUniformLocation(program, "u_metallicFactor");
     us.roughnessFactor = gl.getUniformLocation(program, "u_roughnessFactor");
 
-    if (this.flags & Shader_Static.bitMasks.HAS_BASECOLORMAP) us.baseColorTexture = gl.getUniformLocation(program, "u_baseColorTexture");
+    if (this.flags & Shader_Static.bitMasks.HAS_BASECOLORMAP) {
+      us.baseColorTexture = gl.getUniformLocation(program, "u_baseColorTexture");
+    }
     if (this.flags & Shader_Static.bitMasks.HAS_NORMALMAP) {
       us.normalTexture = gl.getUniformLocation(program, "u_normalTexture");
       us.normalTextureScale = gl.getUniformLocation(program, "u_normalTextureScale");
     }
-    if (this.flags & Shader_Static.bitMasks.HAS_METALROUGHNESSMAP) us.metallicRoughnessTexture = gl.getUniformLocation(program, "u_metallicRoughnessTexture");
+    if (this.flags & Shader_Static.bitMasks.HAS_METALROUGHNESSMAP) {
+      us.metallicRoughnessTexture = gl.getUniformLocation(program, "u_metallicRoughnessTexture");
+    }
     if (this.flags & Shader_Static.bitMasks.HAS_OCCLUSIONMAP) {
       us.occlusionTexture = gl.getUniformLocation(program, "u_occlusionTexture");
       us.occlusionStrength = gl.getUniformLocation(program, "u_occlusionStrength");
@@ -125,6 +140,20 @@ function createSceneResources(gl) {
       us.emissiveTexture = gl.getUniformLocation(program, "u_emissiveTexture");
       us.emissiveFactor = gl.getUniformLocation(program, "u_emissiveFactor");
     }
+
+    if (this.flags & Shader_Static.bitMasks.HAS_TRANSMISSION) {
+      us.transmissionFramebuffer = gl.getUniformLocation(program, "u_transmissionFramebuffer");
+      us.transmissionFactor = gl.getUniformLocation(program, "u_transmissionFactor");
+      us.viewportSize = gl.getUniformLocation(program, "u_viewportSize");
+      us.ViewMatrix = gl.getUniformLocation(program, "u_ViewMatrix");
+      us.ProjectionMatrix = gl.getUniformLocation(program, "u_ProjectionMatrix");
+      us.ModelMatrix = gl.getUniformLocation(program, "u_ModelMatrix");     
+    }
+
+    if (this.flags & Shader_Static.bitMasks.HAS_TRANSMISSION_TEXTURE) {
+      us.transmissionTexture = gl.getUniformLocation(program, "u_transmissionTexture");      
+    }
+
 
     us.diffuseEnvSampler = gl.getUniformLocation(program, "u_DiffuseEnvSampler");
     us.specularEnvSampler = gl.getUniformLocation(program, "u_SpecularEnvSampler");
@@ -286,8 +315,9 @@ function createSceneResources(gl) {
           if (material.normalTexture) prim.shader.defineMacro("HAS_NORMALMAP");
           if (material.occlusionTexture) prim.shader.defineMacro("HAS_OCCLUSIONMAP");
           if (material.emissiveTexture) prim.shader.defineMacro("HAS_EMISSIVEMAP");
+          if (material.extensions?.KHR_materials_transmission) prim.shader.defineMacro("HAS_TRANSMISSION"); 
+          if (material.extensions?.KHR_materials_transmission.transmissionTexture) prim.shader.defineMacro("HAS_TRANSMISSION_TEXTURE");
         }
-
         prim.shader.compile();
       }
     }
@@ -297,6 +327,7 @@ function createSceneResources(gl) {
 
   return {
     defaultSampler,
+    quadScreen,
     bbox,
     brdfLut,
     cubemap,
@@ -304,8 +335,52 @@ function createSceneResources(gl) {
   };
 }
 
-// ------- Helpers: bbox / cubemap -------
+function createFullscreenQuad(gl) {
+  const obj = {
+    vertexData: new Float32Array([
+      -1, -1,
+       1, -1,
+      -1,  1,
+      -1,  1,
+       1, -1,
+       1,  1
+    ]),
+    vertexArray: gl.createVertexArray(),
+    vertexBuffer: gl.createBuffer(),
+    program: Utils.createProgram(gl, Shaders.quadVert, Shaders.quadFrag),
+    positionLocation: 0,
+    textureIndex: 28,
+    uniformTextureLocation: null,
+  };
+  
+  obj.uniformTextureLocation = gl.getUniformLocation(obj.program, "u_Texture");
 
+  gl.bindVertexArray(obj.vertexArray);
+  gl.bindBuffer(gl.ARRAY_BUFFER, obj.vertexBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, obj.vertexData, gl.STATIC_DRAW);
+  gl.vertexAttribPointer(obj.positionLocation, 2, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(obj.positionLocation);
+  gl.bindVertexArray(null);
+
+  // draw 함수 추가
+  obj.draw = function(texture) {
+    gl.useProgram(this.program);
+    gl.clearColor(0, 0, 0, 1);
+
+    gl.activeTexture(gl.TEXTURE0 + this.textureIndex);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.uniform1i(this.uniformTextureLocation, this.textureIndex);
+    
+    gl.bindVertexArray(this.vertexArray);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    gl.bindVertexArray(null);
+  };
+
+  return obj;
+}
+
+
+// ------- Helpers: bbox / cubemap -------
 function createBoundingBox(gl) {
   const obj = {
     vertexData: new Float32Array([

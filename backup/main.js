@@ -409,7 +409,8 @@
             HAS_NORMALMAP: 8,
             HAS_METALROUGHNESSMAP: 16,
             HAS_OCCLUSIONMAP: 32,
-            HAS_EMISSIVEMAP: 64
+            HAS_EMISSIVEMAP: 64,
+            HAS_TRANSMISSION: 128
         },
 
         vsMasterCode: Shaders.pbrVert,
@@ -683,8 +684,6 @@
         //     // vec3.scale(tmpVec3Translate, sceneDeltaTranslate, i);
         //     // mat4.fromTranslation(scenes[i].rootTransform, tmpVec3Translate);
         // }
-        
-
         
         if (scenes.length === 1) {
             // first model, adjust camera
@@ -1181,11 +1180,11 @@
                 if (playAllAnimationTogether) {
                     for (i = 0, len = glTF.animations.length; i < len; i++) {
                         animation = glTF.animations[i];
-                        applyAnimation(animation, glTF);
+                        //applyAnimation(animation, glTF);
                     }
                 } else {
                     animation = glTF.animations[curAnimationId];
-                    applyAnimation(animation, glTF);
+                    //applyAnimation(animation, glTF);
                 }
             }
 

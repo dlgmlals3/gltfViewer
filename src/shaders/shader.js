@@ -24,3 +24,5 @@ Shaders.cubemapVert = loadShaderSource('src/shaders/cubemap.vert.glsl');
 Shaders.cubemapFrag = loadShaderSource('src/shaders/cubemap.frag.glsl');
 Shaders.pbrVert = loadShaderSource('src/shaders/pbr.vert.glsl');
 Shaders.pbrFrag = loadShaderSource('src/shaders/pbr.frag.glsl');
+Shaders.quadVert = loadShaderSource('src/shaders/quad.vert.glsl');
+Shaders.quadFrag = loadShaderSource('src/shaders/quad.frag.glsl');
