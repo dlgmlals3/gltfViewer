@@ -56,6 +56,11 @@ uniform sampler2D u_transmissionTexture;
 #endif
 #endif
 
+// 왜여기는 Define안되는지 모르겠네... 일단 넘어가자..
+//#ifdef HAS_ANISOTROPY
+uniform float u_anisotropyStrength;
+//#endif
+
 in vec3 v_worldPosition;
 in vec3 v_position;
 in vec3 v_normal;
@@ -77,10 +82,28 @@ struct PBRInfo
     float alphaRoughness;         // roughness mapped to a more linear change in the roughness (proposed by [2])
     vec3 diffuseColor;            // color contribution from diffuse lighting
     vec3 specularColor;           // color contribution from specular lighting
+
+    float anisotropyStrength;     // anisotropy strength
+    vec3 anisotropicT;         // anisotropic tangent
+    vec3 anisotropicB;         // anisotropic bitangent    
 };
 
 const float M_PI = 3.141592653589793;
 const float c_MinRoughness = 0.04;
+
+mat3 getTBNMatrix() {
+        vec3 pos_dx = dFdx(v_position);
+    vec3 pos_dy = dFdy(v_position);
+    vec3 tex_dx = dFdx(vec3(v_uv, 0.0));
+    vec3 tex_dy = dFdy(vec3(v_uv, 0.0));
+    vec3 t = (tex_dy.t * pos_dx - tex_dx.t * pos_dy) / (tex_dx.s * tex_dy.t - tex_dy.s * tex_dx.t);
+    vec3 ng = v_normal;
+
+    t = normalize(t - ng * dot(ng, t));
+    vec3 b = normalize(cross(ng, t));
+    mat3 tbn = mat3(t, b, ng);
+    return tbn;
+}
 
 // Find the normal for this fragment, pulling either from a predefined normal map
 // or from the interpolated mesh normal and tangent attributes.
@@ -92,31 +115,20 @@ vec3 getNormal()
 //     vec3 n = v_normal;
 // #endif
 //     return n;
-
-    // Retrieve the tangent space matrix
-// #ifndef HAS_TANGENTS
-    vec3 pos_dx = dFdx(v_position);
-    vec3 pos_dy = dFdy(v_position);
-    vec3 tex_dx = dFdx(vec3(v_uv, 0.0));
-    vec3 tex_dy = dFdy(vec3(v_uv, 0.0));
-    vec3 t = (tex_dy.t * pos_dx - tex_dx.t * pos_dy) / (tex_dx.s * tex_dy.t - tex_dy.s * tex_dx.t);
-
-    vec3 ng = v_normal;
-// #ifdef HAS_NORMALS
-//     vec3 ng = normalize(v_normal);
-// #else
-//     vec3 ng = cross(pos_dx, pos_dy);
-// #endif
-
-    t = normalize(t - ng * dot(ng, t));
-    vec3 b = normalize(cross(ng, t));
-    mat3 tbn = mat3(t, b, ng);
+/*
+#ifdef HAS_NORMALS
+    vec3 ng = normalize(v_normal);
+#else
+    vec3 ng = cross(pos_dx, pos_dy);
+#endif
+*/
+  
 // #else // HAS_TANGENTS
     // mat3 tbn = v_TBN;
 // #endif
 
 // TODO: TANGENTS
-
+    mat3 tbn = getTBNMatrix();
 #ifdef HAS_NORMALMAP
     vec3 n = texture(u_normalTexture, v_uv).rgb;
     n = normalize(tbn * ((2.0 * n - 1.0) * vec3(u_normalTextureScale, u_normalTextureScale, 1.0)));
@@ -149,7 +161,7 @@ float applyIorToRoughness(float roughness, float ior)
     return roughness * clamp(ior * 2.0 - 2.0, 0.0, 1.0);
 }
 
-// dlgmlals3
+
 vec3 getIBLVolumeRefraction(PBRInfo pbrInputs, vec3 n, vec3 v, vec3 position, mat4 modelMatrix, vec4 baseColor)
 {
     //ior = 1.0 → 굴절 없음 (공기)
@@ -243,9 +255,9 @@ vec3 diffuse(PBRInfo pbrInputs)
 // Implementation of fresnel from [4], Equation 15
 vec3 specularReflection(PBRInfo pbrInputs)
 {
-    return pbrInputs.reflectance0 + (pbrInputs.reflectance90 - pbrInputs.reflectance0) * pow(clamp(1.0 - pbrInputs.VdotH, 0.0, 1.0), 5.0);
+    return pbrInputs.reflectance0 + (pbrInputs.reflectance90 - pbrInputs.reflectance0) 
+        * pow(clamp(1.0 - pbrInputs.VdotH, 0.0, 1.0), 5.0);
 }
-
 
 // This calculates the specular geometric attenuation (aka G()),
 // where rougher material will reflect less light back to the viewer.
@@ -262,16 +274,56 @@ float geometricOcclusion(PBRInfo pbrInputs)
     return attenuationL * attenuationV;
 }
 
-
 // The following equation(s) model the distribution of microfacet normals across the area being drawn (aka D())
 // Implementation from "Average Irregularity Representation of a Roughened Surface for Ray Reflection" by T. S. Trowbridge, and K. P. Reitz
 // Follows the distribution function recommended in the SIGGRAPH 2013 course notes from EPIC Games [1], Equation 3.
 float microfacetDistribution(PBRInfo pbrInputs)
 {
+    //pbrInputs.alphaRoughness = 0.5;
     float roughnessSq = pbrInputs.alphaRoughness * pbrInputs.alphaRoughness;
-    float f = (pbrInputs.NdotH * roughnessSq - pbrInputs.NdotH) * pbrInputs.NdotH + 1.0;
+    //float f = (pbrInputs.NdotH * roughnessSq - pbrInputs.NdotH) * pbrInputs.NdotH + 1.0;
+    float f = (pbrInputs.NdotH * pbrInputs.NdotH) * (roughnessSq - 1.0) + 1.0;
     return roughnessSq / (M_PI * f * f);
 }
+
+#ifdef HAS_ANISOTROPY
+// GGX Distribution Anisotropic (Same as Babylon.js)
+// https://blog.selfshadow.com/publications/s2012-shading-course/burley/s2012_pbs_disney_brdf_notes_v3.pdf Addenda
+float D_GGX_anisotropic(float NdotH, float TdotH, float BdotH, float anisotropy, float at, float ab)
+{
+    float a2 = at * ab;
+    vec3 f = vec3(ab * TdotH, at * BdotH, a2 * NdotH);
+    float w2 = a2 / dot(f, f);
+    return a2 * w2 * w2 / M_PI;
+}
+
+// GGX Mask/Shadowing Anisotropic (Same as Babylon.js - smithVisibility_GGXCorrelated_Anisotropic)
+// Heitz http://jcgt.org/published/0003/02/03/paper.pdf
+float V_GGX_anisotropic(float NdotL, float NdotV, float BdotV, float TdotV, float TdotL, float BdotL, float at, float ab)
+{
+    float GGXV = NdotL * length(vec3(at * TdotV, ab * BdotV, NdotV));
+    float GGXL = NdotV * length(vec3(at * TdotL, ab * BdotL, NdotL));
+    float v = 0.5 / (GGXV + GGXL);
+    return clamp(v, 0.0, 1.0);
+}
+
+vec3 BRDF_specularGGXAnisotropy(float alphaRoughness, float anisotropy, vec3 n, vec3 v, vec3 l, vec3 h, vec3 t, vec3 b)
+{
+    // Roughness along the anisotropy bitangent is the material roughness, while the tangent roughness increases with anisotropy.
+    float at = mix(alphaRoughness, 1.0, anisotropy * anisotropy);
+    float ab = clamp(alphaRoughness, 0.001, 1.0);
+
+    float NdotL = clamp(dot(n, l), 0.0, 1.0);
+    float NdotH = clamp(dot(n, h), 0.001, 1.0);
+    float NdotV = dot(n, v);
+
+    float V = V_GGX_anisotropic(NdotL, NdotV, dot(b, v), dot(t, v), dot(t, l), dot(b, l), at, ab);
+    float D = D_GGX_anisotropic(NdotH, dot(t, h), dot(b, h), anisotropy, at, ab);
+
+    return vec3(V * D);
+}
+#endif
+
 
 void main()
 {
@@ -307,7 +359,6 @@ void main()
     // Compute reflectance.
     float reflectance = max(max(specularColor.r, specularColor.g), specularColor.b);
 
-
     // For typical incident reflectance range (between 4% to 100%) set the grazing reflectance to 100% for typical fresnel effect.
     // For very low reflectance range on highly diffuse objects (below 4%), incrementally reduce grazing reflecance to 0%.
     float reflectance90 = clamp(reflectance * 25.0, 0.0, 1.0);
@@ -330,6 +381,30 @@ void main()
     float LdotH = clamp(dot(l, h), 0.0, 1.0);
     float VdotH = clamp(dot(v, h), 0.0, 1.0);
 
+    mat3 tbn = getTBNMatrix();
+    vec3 anisotropicT = tbn[0].xyz;
+    vec3 anisotropicB = tbn[1].xyz;
+
+// struct PBRInfo
+// {
+//     float NdotL;                  // cos angle between normal and light direction
+//     float NdotV;                  // cos angle between normal and view direction
+//     float NdotH;                  // cos angle between normal and half vector
+//     float LdotH;                  // cos angle between light direction and half vector
+//     float VdotH;                  // cos angle between view direction and half vector
+//     float perceptualRoughness;    // roughness value, as authored by the model creator (input to shader)
+//     float metalness;              // metallic value at the surface
+//     vec3 reflectance0;            // full reflectance color (normal incidence angle)
+//     vec3 reflectance90;           // reflectance color at grazing angle
+//     float alphaRoughness;         // roughness mapped to a more linear change in the roughness (proposed by [2])
+//     vec3 diffuseColor;            // color contribution from diffuse lighting
+//     vec3 specularColor;           // color contribution from specular lighting
+
+//     float anisotropyStrength;     // anisotropy strength
+//     vec3 anisotropicT;         // anisotropic tangent
+//     vec3 anisotropicB;         // anisotropic bitangent    
+// };
+
     PBRInfo pbrInputs = PBRInfo(
         NdotL,
         NdotV,
@@ -342,26 +417,50 @@ void main()
         specularEnvironmentR90,
         alphaRoughness,
         diffuseColor,
-        specularColor
+        specularColor,        
+        u_anisotropyStrength,
+        anisotropicT,
+        anisotropicB
     );
+    // dlgmlals3
+    //pbrInputs.alphaRoughness = 0.1;
 
+    vec3 color = vec3(0.0);
+    //vec3 l_specular_metal = vec3(0.0);
+#ifdef HAS_ANISOTROPY
+    float intensity = 0.5;
+    // vec3 l_specular_metal = intensity * NdotL * BRDF_specularGGXAnisotropy(pbrInputs.alphaRoughness, pbrInputs.anisotropyStrength, 
+    //     n, v, l, h, pbrInputs.anisotropicT, pbrInputs.anisotropicB);
+    vec3 l_specular_metal = intensity * NdotL * BRDF_specularGGXAnisotropy(pbrInputs.alphaRoughness, pbrInputs.anisotropyStrength, 
+        n, v, l, h, pbrInputs.anisotropicT, pbrInputs.anisotropicB);
+    
+    vec3 F = specularReflection(pbrInputs);    
+    vec3 diffuseContrib = (1.0 - F) * diffuse(pbrInputs);
+    vec3 specContrib = F * l_specular_metal;  // Fresnel 적용
+
+    color = NdotL * (diffuseContrib + specContrib);
+    //l_specular_dielectric = l_specular_metal;
+    //color = vec3(pbrInputs.anisotropyStrength, 0.0, 0.0);
+#else
     // Calculate the shading terms for the microfacet specular shading model
+    float D = microfacetDistribution(pbrInputs);
     vec3 F = specularReflection(pbrInputs);
     float G = geometricOcclusion(pbrInputs);
-    float D = microfacetDistribution(pbrInputs);
-
+    
     // Calculation of analytical lighting contribution
-    vec3 diffuseContrib = (1.0 - F) * diffuse(pbrInputs);
+    vec3 diffuseContrib = (1.0 - F) * diffuse(pbrInputs);    
     vec3 specContrib = max(vec3(0.0), F * G * D / (4.0 * NdotL * NdotV));
-    // vec3 color = NdotL * u_LightColor * (diffuseContrib + specContrib);
-    vec3 color = NdotL * (diffuseContrib + specContrib);    // assume light color vec3(1, 1, 1)
+    // vec3 color = NdotL * u_LightColor * (diffuseContrib + specContrib);    
+    //diffuseContrib *= 3.5;
+    //specContrib *= 5.5;
+    color = NdotL * (diffuseContrib + specContrib);    // assume light color vec3(1, 1, 1)    
+#endif
+
 
     // Calculate lighting contribution from image based lighting source (IBL)
 // #ifdef USE_IBL
     color += getIBLContribution(pbrInputs, n, reflection, baseColor);
 // #endif
-
-
     // Apply optional PBR terms for additional (optional) shading
 #ifdef HAS_OCCLUSIONMAP
     float ao = texture(u_occlusionTexture, v_uv).r;
@@ -371,8 +470,8 @@ void main()
 #ifdef HAS_EMISSIVEMAP
     vec3 emissive = texture(u_emissiveTexture, v_uv).rgb * u_emissiveFactor;
     color += emissive;
-#endif
-
+#endif    
+    
     // // This section uses mix to override final color for reference app visualization
     // // of various parameters in the lighting equation.
     // color = mix(color, F, u_ScaleFGDSpec.x);
@@ -384,6 +483,8 @@ void main()
     // color = mix(color, baseColor.rgb, u_ScaleDiffBaseMR.y);
     // color = mix(color, vec3(metallic), u_ScaleDiffBaseMR.z);
     // color = mix(color, vec3(perceptualRoughness), u_ScaleDiffBaseMR.w);
-
+    
+    // dlgmlals3
+    //color = vec3(G);
     frag_color = vec4(color, baseColor.a);
-}
+}               

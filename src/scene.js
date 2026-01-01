@@ -48,6 +48,8 @@ function createSceneResources(gl) {
       HAS_EMISSIVEMAP: 64,
       HAS_TRANSMISSION: 128,
       HAS_TRANSMISSION_TEXTURE: 256,
+      HAS_ANISOTROPY: 512,
+      HAS_ANISOTROPY_TEXTURE: 1024,
     },
     vsMasterCode: Shaders.pbrVert,
     fsMasterCode: Shaders.pbrFrag,
@@ -75,6 +77,8 @@ function createSceneResources(gl) {
   Shader.prototype.hasEmissiveMap = function () { return this.flags & Shader_Static.bitMasks.HAS_EMISSIVEMAP; };
   Shader.prototype.hasTransmission = function () { return this.flags & Shader_Static.bitMasks.HAS_TRANSMISSION; };
   Shader.prototype.hasTransmissionTexture = function () { return this.flags & Shader_Static.bitMasks.HAS_TRANSMISSION_TEXTURE; };
+  Shader.prototype.hasAnisotropy = function () { return this.flags & Shader_Static.bitMasks.HAS_ANISOTROPY; };
+  Shader.prototype.hasAnisotropyTexture = function () { return this.flags & Shader_Static.bitMasks.HAS_ANISOTROPY_TEXTURE; };
   Shader.prototype.compile = function () {
     const existing = Shader_Static.programObjects[this.flags];
     if (existing) {
@@ -95,6 +99,9 @@ function createSceneResources(gl) {
     if (this.flags & Shader_Static.bitMasks.HAS_EMISSIVEMAP) fsDefine += "#define HAS_EMISSIVEMAP\n";
     if (this.flags & Shader_Static.bitMasks.HAS_TRANSMISSION) fsDefine += "#define HAS_TRANSMISSION\n";
     if (this.flags & Shader_Static.bitMasks.HAS_TRANSMISSION_TEXTURE) fsDefine += "#define HAS_TRANSMISSION_TEXTURE\n";
+
+    if (this.flags & Shader_Static.bitMasks.HAS_ANISOTROPY) fsDefine += "#define HAS_ANISOTROPY\n";
+    if (this.flags & Shader_Static.bitMasks.HAS_TEXTURE_ANISOTROPY) fsDefine += "#define HAS_TEXTURE_ANISOTROPY\n";
     
 
     const vertexShaderSource = Shader_Static.shaderVersionLine + vsDefine + Shader_Static.vsMasterCode;
@@ -153,7 +160,14 @@ function createSceneResources(gl) {
     if (this.flags & Shader_Static.bitMasks.HAS_TRANSMISSION_TEXTURE) {
       us.transmissionTexture = gl.getUniformLocation(program, "u_transmissionTexture");      
     }
+    
+    if (this.flags & Shader_Static.bitMasks.HAS_ANISOTROPY) {      
+      us.anisotropyStrength = gl.getUniformLocation(program, "u_anisotropyStrength");
+    }
 
+    if (this.flags & Shader_Static.bitMasks.HAS_ANISOTROPY_TEXTURE) {
+      us.anisotropyTexture = gl.getUniformLocation(program, "u_anisotropyTexture");
+    }
 
     us.diffuseEnvSampler = gl.getUniformLocation(program, "u_DiffuseEnvSampler");
     us.specularEnvSampler = gl.getUniformLocation(program, "u_SpecularEnvSampler");
@@ -316,7 +330,11 @@ function createSceneResources(gl) {
           if (material.occlusionTexture) prim.shader.defineMacro("HAS_OCCLUSIONMAP");
           if (material.emissiveTexture) prim.shader.defineMacro("HAS_EMISSIVEMAP");
           if (material.extensions?.KHR_materials_transmission) prim.shader.defineMacro("HAS_TRANSMISSION"); 
-          if (material.extensions?.KHR_materials_transmission.transmissionTexture) prim.shader.defineMacro("HAS_TRANSMISSION_TEXTURE");
+          if (material.extensions?.KHR_materials_transmission?.transmissionTexture) prim.shader.defineMacro("HAS_TRANSMISSION_TEXTURE");
+          if (material.extensions?.KHR_materials_anisotropy) {            
+            prim.shader.defineMacro("HAS_ANISOTROPY"); 
+          }
+          if (material.extensions?.KHR_materials_transmission?.transmissionTexture) prim.shader.defineMacro("HAS_ANISOTROPY_TEXTURE");
         }
         prim.shader.compile();
       }

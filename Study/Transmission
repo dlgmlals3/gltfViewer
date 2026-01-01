@@ -18,6 +18,7 @@ LOD가 커질수록 → 더 작은 mip
 maxMip = log2(textureSize), 1024 → log2(1024) = 10
 roughness는 0~1인데, lod는 0~N 이다
 lod = roughness * log2(textureSize);
+
 roughness	lod	    의미
 0.0	         0	    완전히 선명
 0.25	     2.5	살짝 흐림
@@ -28,6 +29,3 @@ roughness	lod	    의미
 
 3.
 metalic에서는 transmission이 일어나지 않음.
-
-pbr 공부를 좀 해야할듯....
-뷰어에 비해 테두리가 매끈한게 없음...

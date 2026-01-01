@@ -106,7 +106,6 @@ function createRenderer(gl, resources) {
         gl.uniform3fv(programObj.uniformLocations.emissiveFactor, material.emissiveFactor);
       }
 
-      // dlgmlals3
       if (shader.hasTransmission()) {
           const t = material.extensions?.KHR_materials_transmission;
           if (t) {
@@ -122,6 +121,19 @@ function createRenderer(gl, resources) {
                   activeAndBindTexture(curScene, programObj.uniformLocations.transmissionTexture, t.transmissionTexture);
               }
           }
+      }
+
+      if (shader.hasAnisotropy()) {
+        // dlgmlals3
+        
+        const t = material.extensions?.KHR_materials_anisotropy;
+        if (t) {
+            const strength = t.anisotropyStrength !== undefined ? t.anisotropyStrength : 0.0;
+            gl.uniform1f(programObj.uniformLocations.anisotropyStrength, strength);                
+            if (shader.hasAnisotropyTexture() && t.anisotropyTexture) {
+                activeAndBindTexture(curScene, programObj.uniformLocations.anisotropyTexture, t.anisotropyTexture);
+            }
+        }
       }
     }
 
@@ -359,7 +371,6 @@ function createRenderer(gl, resources) {
     resources.quadScreen.draw(opaqueColorTex);      
 
 
-    // dlgmlals3
     // 3. transmission rendering
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, width, height);
