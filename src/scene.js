@@ -33,7 +33,9 @@ function createSceneResources(gl) {
   };
 
   // ---------- CubeMap ----------
-  const cubemap = createCubeMap(gl, brdfLut);
+  // dlgmlals3
+  //const cubemap = createCubeMap(gl, brdfLut);
+  const cubemap = createCubeMapForHdr(gl, brdfLut);
 
   // ---------- Shader system (원래 코드의 Shader_Static/Shader) ----------
   const Shader_Static = {
@@ -426,6 +428,7 @@ function createBoundingBox(gl) {
   return obj;
 }
 
+
 function createCubeMap(gl, brdfLut) {
   const cubemap = {
     textureIndex: 31,
@@ -511,6 +514,7 @@ function createCubeMap(gl, brdfLut) {
     },
 
     draw(V, P) {
+      console.log("Drawing cubemap with environment texture", this.texture);
       // MVP = P * (V without translation)
       const MVP = mat4.create();
       mat4.copy(MVP, V);
@@ -543,3 +547,354 @@ function createCubeMap(gl, brdfLut) {
 
   return cubemap;
 }
+
+function createCubeMapForHdr(gl, brdfLut) {
+  const cubemap = {
+    textureIndex: 31,
+    texture: null,
+    textureIBLDiffuseIndex: 30,
+    textureIBLDiffuse: null,
+    finishLoadingCallback: null,
+    
+    // draw를 위한 프로퍼티들
+    vertexArray: null,
+    vertexBuffer: null,
+    program: null,
+    uniformMvpLocation: null,
+    uniformEnvironmentLocation: null,
+    positionLocation: 0,
+    
+    vertexData: new Float32Array([
+      -1,  1, -1,  -1, -1, -1,   1, -1, -1,   1, -1, -1,   1,  1, -1,  -1,  1, -1,
+      -1, -1,  1,  -1, -1, -1,  -1,  1, -1,  -1,  1, -1,  -1,  1,  1,  -1, -1,  1,
+       1, -1, -1,   1, -1,  1,   1,  1,  1,   1,  1,  1,   1,  1, -1,   1, -1, -1,
+      -1, -1,  1,  -1,  1,  1,   1,  1,  1,   1,  1,  1,   1, -1,  1,  -1, -1,  1,
+      -1,  1, -1,   1,  1, -1,   1,  1,  1,   1,  1,  1,  -1,  1,  1,  -1,  1, -1,
+      -1, -1, -1,  -1, -1,  1,   1, -1, -1,   1, -1, -1,  -1, -1,  1,   1, -1,  1,
+    ]),
+
+    init() {
+      console.log("Initializing cube map resources for HDR environment...");
+      // 큐브맵 draw용 프로그램과 버퍼 초기화
+      this.program = Utils.createProgram(gl, Shaders.cubemapVert, Shaders.cubemapFrag);
+      this.uniformMvpLocation = gl.getUniformLocation(this.program, "u_MVP");
+      this.uniformEnvironmentLocation = gl.getUniformLocation(this.program, "u_environment");
+      
+      this.vertexArray = gl.createVertexArray();
+      this.vertexBuffer = gl.createBuffer();
+      
+      gl.bindVertexArray(this.vertexArray);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, this.vertexData, gl.STATIC_DRAW);
+      gl.vertexAttribPointer(this.positionLocation, 3, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(this.positionLocation);
+      gl.bindVertexArray(null);
+    },
+
+    loadAll() {
+      console.log("Starting to load HDR environment texture...");
+      this.init();
+      Utils.loadHDR('../textures/environment/sample/neutral.hdr', this.onloadHDR.bind(this));
+    },
+    
+    equirectTexture: null,
+    
+    
+    onloadHDR(hdrData) {
+      console.log("HDR environment texture loaded:", hdrData);
+      
+      // Equirectangular 텍스처 생성 - RGBA8로 변경 (FLOAT 대신)
+      // HDR 데이터를 0-255 범위로 변환
+      const width = hdrData.shape[0];
+      const height = hdrData.shape[1];
+      const floatData = hdrData.data;
+      const ubyteData = new Uint8Array(width * height * 4);
+    
+      // dlgmlals3  이부분 컬러텍스처 부분  이해 안됨 이거 공부하자.
+      // 뭐가 문제였는지
+      /*
+      - 원래 코드는 `gl.RGBA32F` (FLOAT 포맷)로 텍스처를 생성했습니다
+      - HDR 파일의 원본 데이터는 FLOAT (32-bit float)입니다
+      - 하지만 __이 FLOAT 텍스처를 shader의 `sampler2D`에서 읽을 때 문제가 발&#xC0DD;__&#xD588;습니다
+      - WebGL에서 FLOAT 텍스처를 읽으려면 특별한 확장(`EXT_color_buffer_float` 또는 `OES_texture_float_linear`)이 필요하거나, 읽기가 제대로 작동하지 않았습니다
+
+      ### 해결 방법
+
+      1. __HDR Float 데이터를 0-255 범위의 정수(Uint8)로 변환__
+
+        - `hdrData.exposure` 적용: 밝기 보정
+        - `hdrData.gamma` 적용: 감마 보정
+        - `* 255`하여 0-255 범위로 변환
+
+      2. __텍스처 포맷을 `gl.UNSIGNED_BYTE`로 변경__
+
+        - 일반적인 RGBA8 텍스처가 되어 어떤 GPU에서도 문제없이 작동합니다
+      */
+
+      for (let i = 0; i < floatData.length; i++) {
+        // HDR 값을 노출(exposure)과 감마 보정 적용 후 0-255로 변환
+        let value = floatData[i];
+        value *= hdrData.exposure; // 노출 보정
+        value = Math.pow(value, 1.0 / hdrData.gamma); // 감마 보정
+        ubyteData[i] = Math.min(255, Math.max(0, Math.floor(value * 255)));
+      }
+      
+      this.equirectTexture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this.equirectTexture);
+      gl.texImage2D(
+        gl.TEXTURE_2D, 0,
+        gl.RGBA,
+        width, height, 0,
+        gl.RGBA, gl.UNSIGNED_BYTE,
+        ubyteData
+      );
+      
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      
+      // Equirectangular → CubeMap 변환
+      this.convertEquirectToCubemap(512);
+      
+      if (this.finishLoadingCallback) {
+        this.finishLoadingCallback();
+      }
+    },
+    
+    convertEquirectToCubemap(cubeSize) {
+      console.log("Converting equirectangular HDR to cubemap with size:", cubeSize);
+      const size = cubeSize || 512;
+      
+      // EXT_color_buffer_float 확장 확인
+      const extColorBufferFloat = gl.getExtension('EXT_color_buffer_float');
+      if (!extColorBufferFloat) {
+        console.warn('dlgmlals3 EXT_color_buffer_float not supported, trying fallback...');
+        console.warn('dlgmlals3 EXT_color_buffer_float not supported, trying fallback...');
+        console.warn('dlgmlals3 EXT_color_buffer_float not supported, trying fallback...');
+        console.warn('dlgmlals3 EXT_color_buffer_float not supported, trying fallback...');
+        console.warn('dlgmlals3 EXT_color_buffer_float not supported, trying fallback...');
+      }
+      
+      // 변환 프로그램 생성
+      const program = Utils.createProgram(
+        gl, 
+        Shaders.equirect2cubeVert,
+        Shaders.equirect2cubeFrag
+      );
+      
+      // 큐브 버퍼 생성
+      const vertexData = new Float32Array([
+        -1,  1, -1,  -1, -1, -1,   1, -1, -1,   1, -1, -1,   1,  1, -1,  -1,  1, -1,
+        -1, -1,  1,  -1, -1, -1,  -1,  1, -1,  -1,  1, -1,  -1,  1,  1,  -1, -1,  1,
+         1, -1, -1,   1, -1,  1,   1,  1,  1,   1,  1,  1,   1,  1, -1,   1, -1, -1,
+        -1, -1,  1,  -1,  1,  1,   1,  1,  1,   1,  1,  1,   1, -1,  1,  -1, -1,  1,
+        -1,  1, -1,   1,  1, -1,   1,  1,  1,   1,  1,  1,  -1,  1,  1,  -1,  1, -1,
+        -1, -1, -1,  -1, -1,  1,   1, -1, -1,   1, -1, -1,  -1, -1,  1,   1, -1,  1,
+      ]);
+      
+      const vao = gl.createVertexArray();
+      const vbo = gl.createBuffer();
+      
+      gl.bindVertexArray(vao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.bufferData(gl.ARRAY_BUFFER, vertexData, gl.STATIC_DRAW);
+      gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(0);
+      gl.bindVertexArray(null);
+      
+      // 큐브맵 텍스처 생성 - RGBA8 사용 (より一般的)
+      this.texture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_CUBE_MAP, this.texture);
+      
+      for (let i = 0; i < 6; i++) {
+        gl.texImage2D(
+          gl.TEXTURE_CUBE_MAP_POSITIVE_X + i, 0,
+          gl.RGBA, size, size, 0,
+          gl.RGBA, gl.UNSIGNED_BYTE, null
+        );
+      }
+      
+      gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      
+      // 프레임버퍼 생성
+      const fbo = gl.createFramebuffer();
+      
+      // 투영 행렬 (90도 FOV)
+      const projection = mat4.create();
+      mat4.perspective(projection, Math.PI / 2, 1.0, 0.1, 10.0);
+      
+      // 6개 면을 위한 뷰 행렬
+      const views = [
+        mat4.lookAt(mat4.create(), [0,0,0], [ 1, 0, 0], [0,-1, 0]),
+        mat4.lookAt(mat4.create(), [0,0,0], [-1, 0, 0], [0,-1, 0]),
+        mat4.lookAt(mat4.create(), [0,0,0], [ 0, 1, 0], [0, 0, 1]),
+        mat4.lookAt(mat4.create(), [0,0,0], [ 0,-1, 0], [0, 0,-1]),
+        mat4.lookAt(mat4.create(), [0,0,0], [ 0, 0, 1], [0,-1, 0]),
+        mat4.lookAt(mat4.create(), [0,0,0], [ 0, 0,-1], [0,-1, 0]),
+      ];
+      
+      gl.useProgram(program);
+      const vpLoc = gl.getUniformLocation(program, 'u_viewProjection');
+      const texLoc = gl.getUniformLocation(program, 'u_equirectangularMap');
+      
+      console.log("Program:", program, "VP location:", vpLoc, "Tex location:", texLoc);
+      console.log("Equirect texture:", this.equirectTexture);
+      
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.equirectTexture);
+      gl.uniform1i(texLoc, 0);
+      
+      // GLSL optimizer가 uniform을 제거하지 않도록 force
+      const forceLoc = gl.getUniformLocation(program, 'u_forceUse');
+      if (forceLoc) {
+        gl.uniform1f(forceLoc, 1.0);
+      }
+      
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.viewport(0, 0, size, size);
+      
+      // 렌더 상태 설정
+      gl.disable(gl.DEPTH_TEST);
+      gl.disable(gl.CULL_FACE);
+      gl.disable(gl.BLEND);
+      gl.clearColor(0.0, 1.0, 0.0, 1.0); // 초록색으로 설정해서 clear가 되는지 확인
+      
+      // 각 큐브맵 면 렌더링
+      for (let i = 0; i < 6; i++) {
+        const vp = mat4.create();
+        mat4.multiply(vp, projection, views[i]);
+        gl.uniformMatrix4fv(vpLoc, false, vp);
+        
+        gl.framebufferTexture2D(
+          gl.FRAMEBUFFER,
+          gl.COLOR_ATTACHMENT0,
+          gl.TEXTURE_CUBE_MAP_POSITIVE_X + i,
+          this.texture,
+          0
+        );
+        
+        // 프레임버퍼 상태 체크
+        const fbStatus = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+        console.log(`Face ${i}: Framebuffer status check - ${fbStatus} (COMPLETE=${gl.FRAMEBUFFER_COMPLETE})`);
+        
+        if (fbStatus !== gl.FRAMEBUFFER_COMPLETE) {
+          const statusMap = {
+            [gl.FRAMEBUFFER_INCOMPLETE_ATTACHMENT]: "INCOMPLETE_ATTACHMENT",
+            [gl.FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT]: "INCOMPLETE_MISSING_ATTACHMENT",
+            [gl.FRAMEBUFFER_INCOMPLETE_DIMENSIONS]: "INCOMPLETE_DIMENSIONS",
+            [gl.FRAMEBUFFER_UNSUPPORTED]: "UNSUPPORTED"
+          };
+          console.error(`Face ${i}: Framebuffer NOT complete! Status: ${fbStatus} - ${statusMap[fbStatus] || 'UNKNOWN'}`);
+          continue; // Skip this face if framebuffer is incomplete
+        }
+        
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        
+        gl.bindVertexArray(vao);
+        gl.drawArrays(gl.TRIANGLES, 0, 36);
+        gl.bindVertexArray(null);
+        
+        // WebGL 에러 체크
+        const err = gl.getError();
+        if (err !== gl.NO_ERROR) {
+          console.error(`Face ${i}: WebGL error after draw: ${err}`);
+        } else {
+          console.log(`Face ${i}: Draw successful!`);
+        }
+        
+        // 프레임버퍼에서 픽셀 읽기 (디버깅)
+        const pixels = new Float32Array(4);
+        gl.readPixels(size/2, size/2, 1, 1, gl.RGBA, gl.FLOAT, pixels);
+        console.log(`Face ${i}: Center pixel =`, pixels[0], pixels[1], pixels[2], pixels[3]);
+      }
+      
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindVertexArray(null);
+      
+      // 밉맵 생성 건너뛰기 - FLOAT 텍스처에서 mipmap 문제 가능성
+      // gl.bindTexture(gl.TEXTURE_CUBE_MAP, this.texture);
+      // console.log("Generating mipmaps for cubemap texture...");
+      // gl.generateMipmap(gl.TEXTURE_CUBE_MAP);
+      // gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      
+      // 디버깅: 텍스처를 다시 읽어서 확인
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_CUBE_MAP_POSITIVE_X, this.texture, 0);
+      const testPixels = new Float32Array(4);
+      gl.readPixels(size/2, size/2, 1, 1, gl.RGBA, gl.FLOAT, testPixels);
+      console.log("After mipmap - Face 0 center pixel:", testPixels[0], testPixels[1], testPixels[2], testPixels[3]);
+      console.log("After mipmap - Face 0 center pixel:", testPixels[0], testPixels[1], testPixels[2], testPixels[3]);
+      console.log("After mipmap - Face 0 center pixel:", testPixels[0], testPixels[1], testPixels[2], testPixels[3]);
+      console.log("After mipmap - Face 0 center pixel:", testPixels[0], testPixels[1], testPixels[2], testPixels[3]);
+      console.log("After mipmap - Face 0 center pixel:", testPixels[0], testPixels[1], testPixels[2], testPixels[3]);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      
+      gl.bindTexture(gl.TEXTURE_CUBE_MAP, null);
+      
+      gl.deleteFramebuffer(fbo);
+      gl.deleteVertexArray(vao);
+      gl.deleteBuffer(vbo);
+      gl.deleteProgram(program);
+      
+      console.log('Equirectangular → CubeMap 변환 완료. Texture:', this.texture);
+    },
+    
+    draw(V, P) {
+      console.log("DRAW - texture:", this.texture, "program:", this.program, "VAO:", this.vertexArray, "textureIndex:", this.textureIndex);
+      
+      if (!this.texture || !this.program || !this.vertexArray) {
+        console.error("Missing resources for cubemap draw!", {
+          texture: this.texture,
+          program: this.program,
+          vertexArray: this.vertexArray
+        });
+        return;
+      }
+      
+      // MVP = P * (V without translation)  
+      const MVP = mat4.create();
+      mat4.copy(MVP, V);
+      MVP[12] = MVP[13] = MVP[14] = 0.0;
+      MVP[15] = 1.0;
+      mat4.mul(MVP, P, MVP);
+
+      // Depth 함수를 LEQUAL로 변경 (큐브맵은 depth = 1.0이므로)
+      gl.depthFunc(gl.LEQUAL);
+
+      gl.useProgram(this.program);
+      
+      // 텍스처 바인딩 디버깅
+      console.log("Binding texture to unit:", this.textureIndex);
+      gl.activeTexture(gl.TEXTURE0 + this.textureIndex);
+      gl.bindTexture(gl.TEXTURE_CUBE_MAP, this.texture);
+      console.log("After bindTexture - bound texture:", gl.getParameter(gl.TEXTURE_BINDING_CUBE_MAP));
+
+      gl.uniformMatrix4fv(this.uniformMvpLocation, false, MVP);
+      gl.uniform1i(this.uniformEnvironmentLocation, this.textureIndex);
+      console.log("Set uniform environment to index:", this.textureIndex);
+
+      gl.bindVertexArray(this.vertexArray);
+      gl.drawArrays(gl.TRIANGLES, 0, 36);
+      gl.bindVertexArray(null);
+      
+      // Depth 함수를 원래대로 복구
+      gl.depthFunc(gl.LESS);
+      
+      const err = gl.getError();
+      if (err !== gl.NO_ERROR) {
+        console.error("WebGL error during cubemap draw:", err);
+      }
+    }
+  };
+  
+  return cubemap;
+}
+

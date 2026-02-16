@@ -324,7 +324,7 @@ vec3 BRDF_specularGGXAnisotropy(float alphaRoughness, float anisotropy, vec3 n, 
 }
 #endif
 
-
+// dlgmlals3
 void main()
 {
     float perceptualRoughness = u_roughnessFactor;
@@ -337,6 +337,8 @@ void main()
     perceptualRoughness = mrSample.g * perceptualRoughness;
     metallic = mrSample.b * metallic;
 #endif
+
+
     perceptualRoughness = clamp(perceptualRoughness, c_MinRoughness, 1.0);
     metallic = clamp(metallic, 0.0, 1.0);
     // Roughness is authored as perceptual roughness; as is convention,
@@ -364,7 +366,6 @@ void main()
     float reflectance90 = clamp(reflectance * 25.0, 0.0, 1.0);
     vec3 specularEnvironmentR0 = specularColor.rgb;
     vec3 specularEnvironmentR90 = vec3(1.0, 1.0, 1.0) * reflectance90;
-
 
     vec3 n = getNormal();                             // normal at surface point
     // vec3 v = vec3( 0.0, 0.0, 1.0 );        // Vector from surface point to camera
@@ -442,6 +443,8 @@ void main()
     //l_specular_dielectric = l_specular_metal;
     //color = vec3(pbrInputs.anisotropyStrength, 0.0, 0.0);
 #else
+
+
     // Calculate the shading terms for the microfacet specular shading model
     float D = microfacetDistribution(pbrInputs);
     vec3 F = specularReflection(pbrInputs);

@@ -65,3 +65,16 @@ Utils.loadImages = function(urls, onload) {
         imgs.push(loadImage(urls[i], onImgLoad));
     }
 };
+
+Utils.loadHDR = function(url, onload) {
+    fetch(url)
+        .then(response => response.arrayBuffer())
+        .then(buffer => {
+            // hdrParser.js의 parseHdr 함수 사용
+            const hdrData = parseHdr(buffer);
+            onload(hdrData);
+        })
+        .catch(error => {
+            console.error('HDR 로딩 실패:', error);
+        });
+};

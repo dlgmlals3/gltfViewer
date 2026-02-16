@@ -1,0 +1,14 @@
+1> 채널에서 입력받는다.
+Roughness g 채널 -> Perceptual Roughness
+Roughness b 채널 -> Metallic
+// Roughness is stored in the 'g' channel, metallic is stored in the 'b' channel.
+// This layout intentionally reserves the 'r' channel for (optional) occlusion map data
+vec4 mrSample = texture(u_MetallicRoughnessSampler, getMetallicRoughnessUV());
+info.perceptualRoughness *= mrSample.g;
+info.metallic *= mrSample.b;
+
+2> 클램프를 한다.
+materialInfo.perceptualRoughness = clamp(materialInfo.perceptualRoughness, 0.0, 1.0);
+materialInfo.metallic = clamp(materialInfo.metallic, 0.0, 1.0);
+
+

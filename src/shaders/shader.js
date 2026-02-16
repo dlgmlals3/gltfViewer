@@ -26,3 +26,5 @@ Shaders.pbrVert = loadShaderSource('src/shaders/pbr.vert.glsl');
 Shaders.pbrFrag = loadShaderSource('src/shaders/pbr.frag.glsl');
 Shaders.quadVert = loadShaderSource('src/shaders/quad.vert.glsl');
 Shaders.quadFrag = loadShaderSource('src/shaders/quad.frag.glsl');
+Shaders.equirect2cubeVert = loadShaderSource('src/shaders/equirect2cube.vert.glsl');
+Shaders.equirect2cubeFrag = loadShaderSource('src/shaders/equirect2cube.frag.glsl');
