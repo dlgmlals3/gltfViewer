@@ -594,47 +594,29 @@ function createCubeMapForHdr(gl, brdfLut) {
     loadAll() {
       console.log("Starting to load HDR environment texture...");
       this.init();
-      Utils.loadHDR('../textures/environment/sample/neutral.hdr', this.onloadHDR.bind(this));
+      Utils.loadHDR('../textures/environment/sample/doge2.hdr', this.onloadHDR.bind(this));
     },
     
     equirectTexture: null,
     
     
     onloadHDR(hdrData) {
-      console.log("HDR environment texture loaded:", hdrData);
-      
+      console.log("HDR environment texture loaded:", hdrData);    
       // Equirectangular 텍스처 생성 - RGBA8로 변경 (FLOAT 대신)
       // HDR 데이터를 0-255 범위로 변환
       const width = hdrData.shape[0];
       const height = hdrData.shape[1];
       const floatData = hdrData.data;
       const ubyteData = new Uint8Array(width * height * 4);
-    
-      // dlgmlals3  이부분 컬러텍스처 부분  이해 안됨 이거 공부하자.
-      // 뭐가 문제였는지
-      /*
-      - 원래 코드는 `gl.RGBA32F` (FLOAT 포맷)로 텍스처를 생성했습니다
-      - HDR 파일의 원본 데이터는 FLOAT (32-bit float)입니다
-      - 하지만 __이 FLOAT 텍스처를 shader의 `sampler2D`에서 읽을 때 문제가 발&#xC0DD;__&#xD588;습니다
-      - WebGL에서 FLOAT 텍스처를 읽으려면 특별한 확장(`EXT_color_buffer_float` 또는 `OES_texture_float_linear`)이 필요하거나, 읽기가 제대로 작동하지 않았습니다
 
-      ### 해결 방법
-
-      1. __HDR Float 데이터를 0-255 범위의 정수(Uint8)로 변환__
-
-        - `hdrData.exposure` 적용: 밝기 보정
-        - `hdrData.gamma` 적용: 감마 보정
-        - `* 255`하여 0-255 범위로 변환
-
-      2. __텍스처 포맷을 `gl.UNSIGNED_BYTE`로 변경__
-
-        - 일반적인 RGBA8 텍스처가 되어 어떤 GPU에서도 문제없이 작동합니다
-      */
-
+      // RGBA32 포맷을 그대로 사용이 안되서 Uint8 bit 어레이레 넣음.
+      // 그대로 사용하려면 hdrData를 넣어 주면됌..
+      // 
       for (let i = 0; i < floatData.length; i++) {
         // HDR 값을 노출(exposure)과 감마 보정 적용 후 0-255로 변환
         let value = floatData[i];
         value *= hdrData.exposure; // 노출 보정
+        hdrData.gamma = 2.2;
         value = Math.pow(value, 1.0 / hdrData.gamma); // 감마 보정
         ubyteData[i] = Math.min(255, Math.max(0, Math.floor(value * 255)));
       }
@@ -645,9 +627,11 @@ function createCubeMapForHdr(gl, brdfLut) {
         gl.TEXTURE_2D, 0,
         gl.RGBA,
         width, height, 0,
-        gl.RGBA, gl.UNSIGNED_BYTE,
+        gl.RGBA, 
+        gl.UNSIGNED_BYTE,
         ubyteData
       );
+
       
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -655,8 +639,9 @@ function createCubeMapForHdr(gl, brdfLut) {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.bindTexture(gl.TEXTURE_2D, null);
       
-      // Equirectangular → CubeMap 변환
-      this.convertEquirectToCubemap(512);
+      // dlgmlals3
+      // Equirectangular → CubeMap 변환 // 해상도
+      this.convertEquirectToCubemap(4096);
       
       if (this.finishLoadingCallback) {
         this.finishLoadingCallback();
@@ -665,15 +650,11 @@ function createCubeMapForHdr(gl, brdfLut) {
     
     convertEquirectToCubemap(cubeSize) {
       console.log("Converting equirectangular HDR to cubemap with size:", cubeSize);
-      const size = cubeSize || 512;
+      const size = cubeSize;
       
       // EXT_color_buffer_float 확장 확인
       const extColorBufferFloat = gl.getExtension('EXT_color_buffer_float');
       if (!extColorBufferFloat) {
-        console.warn('dlgmlals3 EXT_color_buffer_float not supported, trying fallback...');
-        console.warn('dlgmlals3 EXT_color_buffer_float not supported, trying fallback...');
-        console.warn('dlgmlals3 EXT_color_buffer_float not supported, trying fallback...');
-        console.warn('dlgmlals3 EXT_color_buffer_float not supported, trying fallback...');
         console.warn('dlgmlals3 EXT_color_buffer_float not supported, trying fallback...');
       }
       
@@ -809,9 +790,9 @@ function createCubeMapForHdr(gl, brdfLut) {
         }
         
         // 프레임버퍼에서 픽셀 읽기 (디버깅)
-        const pixels = new Float32Array(4);
-        gl.readPixels(size/2, size/2, 1, 1, gl.RGBA, gl.FLOAT, pixels);
-        console.log(`Face ${i}: Center pixel =`, pixels[0], pixels[1], pixels[2], pixels[3]);
+        //const pixels = new Float32Array(4);
+        //gl.readPixels(size/2, size/2, 1, 1, gl.RGBA, gl.FLOAT, pixels);
+        //console.log(`Face ${i}: Center pixel =`, pixels[0], pixels[1], pixels[2], pixels[3]);
       }
       
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -848,7 +829,7 @@ function createCubeMapForHdr(gl, brdfLut) {
     },
     
     draw(V, P) {
-      console.log("DRAW - texture:", this.texture, "program:", this.program, "VAO:", this.vertexArray, "textureIndex:", this.textureIndex);
+      // console.log("DRAW - texture:", this.texture, "program:", this.program, "VAO:", this.vertexArray, "textureIndex:", this.textureIndex);
       
       if (!this.texture || !this.program || !this.vertexArray) {
         console.error("Missing resources for cubemap draw!", {
@@ -872,14 +853,14 @@ function createCubeMapForHdr(gl, brdfLut) {
       gl.useProgram(this.program);
       
       // 텍스처 바인딩 디버깅
-      console.log("Binding texture to unit:", this.textureIndex);
+      // console.log("Binding texture to unit:", this.textureIndex);
       gl.activeTexture(gl.TEXTURE0 + this.textureIndex);
       gl.bindTexture(gl.TEXTURE_CUBE_MAP, this.texture);
-      console.log("After bindTexture - bound texture:", gl.getParameter(gl.TEXTURE_BINDING_CUBE_MAP));
+      // console.log("After bindTexture - bound texture:", gl.getParameter(gl.TEXTURE_BINDING_CUBE_MAP));
 
       gl.uniformMatrix4fv(this.uniformMvpLocation, false, MVP);
       gl.uniform1i(this.uniformEnvironmentLocation, this.textureIndex);
-      console.log("Set uniform environment to index:", this.textureIndex);
+      // console.log("Set uniform environment to index:", this.textureIndex);
 
       gl.bindVertexArray(this.vertexArray);
       gl.drawArrays(gl.TRIANGLES, 0, 36);

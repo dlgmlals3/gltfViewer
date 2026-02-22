@@ -13,6 +13,7 @@ vec2 sampleSphericalMap(vec3 v) {
     vec2 uv = vec2(atan(v.z, v.x), asin(v.y));
     uv *= invAtan;
     uv += 0.5;
+    uv.y = 1.0 - uv.y;
     return uv;
 }
 
@@ -20,8 +21,6 @@ void main() {
     vec3 normal = normalize(v_position);
     vec2 uv = sampleSphericalMap(normal);
     vec3 color = texture(u_equirectangularMap, uv).rgb;
-    // Force use uniform by multiplying with result
-    color = color * (0.5 + 0.5 * u_forceUse); 
+    color = color * (0.5 + 0.5); 
     fragColor = vec4(color, 1.0);
-    //fragColor = vec4(1.0, 0.0, 1.0, 1.0);
 }

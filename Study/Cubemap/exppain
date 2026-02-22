@@ -1,0 +1,261 @@
+### 환경맵 로딩 과정 (전체 흐름)
+=============================================================
+1. HDR 파일 로드 (doge2.hdr)
+loadAll() {
+    console.log("Starting to load HDR environment texture...");
+    this.init();
+    Utils.loadHDR('../textures/environment/sample/doge2.hdr', this.onloadHDR.bind(this));
+},
+
+Utils.loadHDR = function(url, onload) {
+    fetch(url)
+        .then(res => res.arrayBuffer())
+        .then(buffer => {
+            // hdrParser.js의 parseHdr 함수 사용
+            const hdrData = parseHdr(buffer); <---- 2
+            onload(hdrData); <---- 3
+        });
+};
+
+==============================================================
+2. HDR 파서로 파싱 (hdrParser.js)
+파싱 결과:
+- `hdrData.shape = [width, height]`
+- `hdrData.exposure` (기본값 1.0)
+- `hdrData.gamma` (기본값 1.0)
+- `hdrData.data` (Float32Array)
+
+- RLE 디코딩
+### RLE (Run-Length Encoding) 압축
+Radiance HDR은 RLE 압축 사용:
+- 같은 값이 연달아 나오면 (개수, 값) 형태로 저장
+- 코드에서 `readPixelsRawRLE` 함수로 디코딩
+- RGBE → Float32 변환
+- shape: [width, height], exposure, gamma 정보 추출
+
+### RGBE 포맷 (4바이트 per 픽셀)
+HDR 파일은 __RGBE (Red Green Blue Exponent)__ 형식 사용:
+- R(1바이트), G(1바이트), B(1바이트), E(1바이트)
+- E = 지수 (exponent)
+- 실제 값 = (R/G/B / 255) × 2^(E - 128)
+
+var r = data[offset+0]/255;
+var g = data[offset+1]/255;
+var b = data[offset+2]/255;
+var e = data[offset+3];
+var f = Math.pow(2.0, e - 128.0);
+r *= f; g *= f; b *= f;  // Float32로 변환
+
+==============================================================
+3. 파싱 후 메모리 최적화 한 equirectTexture 생성
+'''
+hdrData.data가 채널당 32비트인데, 이게 지원되려면 EXT_color_buffer_float 가 있어야함
+지원 되긴 하는데, 왜 동작않하는지 잘모르겠음.
+그런데 메모리 문제가 있어서 채널당 8비트가 좋은것 같음. --> uint8
+그래서 32비트를 0 ~ 255로 변환해서 8비트 어레이에 담음
+1024 x 1024 텍스처 4배 메모리 절감 효과 발생
+32비트: 1024 * 1024 * (4 * 4(rgba)) * 6 (큐브맵 면) = 96 MB
+8비트 : 1024 * 1024 * (1 * 4(rgba)) * 6 = 24 MB
+체널 당 32비트 채널로 만드려면 
+- gl.RGBA --> gl.RGBA32F로 바꿔주어야 한다.
+- gl.UNSIGNED_BYTE --> gl.FLOAT
+
+gl.texImage2D(
+  gl.TEXTURE_2D, 0,
+  gl.RGBA32F, // gl.RGBA,
+  width, height, 0,
+  gl.RGBA, 
+  gl.FLOAT, // gl.UNSIGNED_BYTE,
+  hdrData.data // ubyteData
+);
+'''
+onloadHDR(hdrData) {      
+    // 파싱된 결과를 가져옴
+    const width = hdrData.shape[0];
+    const height = hdrData.shape[1];
+    const floatData = hdrData.data;
+    const ubyteData = new Uint8Array(width * height * 4);
+
+    // exposure, gamma 보정 및 채널당 32->8 비트로 전환.
+    for (let i = 0; i < floatData.length; i++) {
+        // HDR 값을 노출(exposure)과 감마 보정 적용 후 0-255로 변환
+        let value = floatData[i];
+        value *= hdrData.exposure; // 노출 보정
+        hdrData.gamma = 2.2;
+        value = Math.pow(value, 1.0 / hdrData.gamma); // 감마 보정
+        // 0 ~ 255 범위로 변환
+        ubyteData[i] = Math.min(255, Math.max(0, Math.floor(value * 255)));
+    }
+
+// 파싱된 결과로 equirectTexture 생성
+this.equirectTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.equirectTexture);
+    gl.texImage2D(
+    gl.TEXTURE_2D, 0,
+    gl.RGBA,
+    width, height, 0,
+    gl.RGBA, 
+    gl.UNSIGNED_BYTE,
+    ubyteData
+);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+gl.bindTexture(gl.TEXTURE_2D, null);
+
+=============================================================
+4. Equirectangular → CubeMap 변환 (equirect2cube shader)
+
+위에서 생성한 equirectTexture 를 가지고 렌더링해보자.
+
+1> FBO 및 큐브맵 텍스처 생성
+텍스처 생성 후, TEXTURE_CUBE_MAP로 바인딩
+큐브맵 텍스처 6면 텍스처 RGBA8 타입으로 내부 텍스처 생성
+
+'''
+this.texture = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_CUBE_MAP, this.texture);
+
+for (let i = 0; i < 6; i++) {
+    gl.texImage2D(
+        gl.TEXTURE_CUBE_MAP_POSITIVE_X + i, 0,
+        gl.RGBA, size, size, 0,
+        gl.RGBA, gl.UNSIGNED_BYTE, null
+    );
+}
+gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+'''
+
+6개 면을 위한 뷰 행렬를 정의 함.
+'''
+const views = [
+mat4.lookAt(mat4.create(), [0,0,0], [ 1, 0, 0], [0,-1, 0]),
+mat4.lookAt(mat4.create(), [0,0,0], [-1, 0, 0], [0,-1, 0]),
+mat4.lookAt(mat4.create(), [0,0,0], [ 0, 1, 0], [0, 0, 1]),
+mat4.lookAt(mat4.create(), [0,0,0], [ 0,-1, 0], [0, 0,-1]),
+mat4.lookAt(mat4.create(), [0,0,0], [ 0, 0, 1], [0,-1, 0]),
+mat4.lookAt(mat4.create(), [0,0,0], [ 0, 0,-1], [0,-1, 0]),
+];
+'''
+
+90도 FOV 투영행렬 생성
+'''
+const projection = mat4.create();
+mat4.perspective(projection, Math.PI / 2, 1.0, 0.1, 10.0);
+'''
+
+렌더링 준비, fbo 바인딩, hdrTexture 바인딩.
+'''
+gl.bindTexture(gl.TEXTURE_2D, this.equirectTexture);
+gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+'''
+각 큐브맵 면 렌더링 (각 구면 좌표를 샘플링)
+어떻게 view 방향과 큐브맵이 연결되는거지 ?
+큐브맵 (1,1,1) (-1, -1, 1) ~~ 정육면체 렌더링
+이걸 frag에서 uv로 0~1 정규화 하면 원점에서 해당꼭지점으로 가는 방향벡터 생성됨
+해당 방향벡터를 구좌표계로 위도 경도로 변환하여 위경도 (회전량) 계산. (구좌표계)
+위도 : 위아래 회전, 경도 : 좌우 회전
+이때 atan, asin이 사용됨.
+원점에서 HDR 2D이미지의 대한 uv값을 얻을 수 있음.
+
+3D 방향벡터를 2D로 변환해보자. (위경도)
+위도는 Asin을 이용한다.
+uv.y 생각해보면 북극은 (0,1,0), 남극은 (0, -1, 0) 이다.
+asin(1) = 2 / PI, 90도 회전
+asin(-1) = - 2 / PI, -90도 회전
+정규화 하기 위해서 PI로 나눠주고 0.5 더 해주면 됨. (1/PI = 0.3183)
+
+경도는 Atan를 이용한다.
+xz 평면에서 각도를 계산, 
+기울기 = z 증가량 / x 증가랑  = tan(세타) = atan(기울기) = 세타 (호도법)
+구 라서 atan 값의 범위는 -PI ~ PI 이기 때문에 정규화를 위해 (1 / 2 * 파이 = 0.1592)을 곱해줌.
+그리고 0.5 더해서 0 ~ 1로 만듬
+
+`atan(z, x)`와 `asin(y)` 수학 공식이 3D 방향을 2D UV로 변환해줍니다. 
+이것이 HDR을 큐브맵 6면에 매핑하는 원리입니다.
+
+
+'''
+for (let i = 0; i < 6; i++) {
+    const vp = mat4.create();
+    mat4.multiply(vp, projection, views[i]);
+    gl.uniformMatrix4fv(vpLoc, false, vp);
+
+    gl.framebufferTexture2D(
+        gl.FRAMEBUFFER,
+        gl.COLOR_ATTACHMENT0,
+        gl.TEXTURE_CUBE_MAP_POSITIVE_X + i,
+        this.texture,
+        0
+    );
+
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    gl.bindVertexArray(vao);
+    gl.drawArrays(gl.TRIANGLES, 0, 36);
+    gl.bindVertexArray(null);
+
+    // 프레임버퍼에서 픽셀 읽기 (디버깅)
+    const pixels = new Float32Array(4);
+    gl.readPixels(size/2, size/2, 1, 1, gl.RGBA, gl.FLOAT, pixels);
+    console.log(`Face ${i}: Center pixel =`, pixels[0], pixels[1], pixels[2], pixels[3]);
+}
+'''
+
+셰이더
+'''
+Vertex
+void main() {
+    v_position = a_position;
+    gl_Position = u_viewProjection * vec4(a_position, 1.0);
+}
+'''
+'''
+FragShader
+
+uniform sampler2D u_equirectangularMap;
+uniform float u_forceUse; // GLSL optimizer가 uniform을 제거하지 않도록 force
+
+const vec2 invAtan = vec2(0.1591, 0.3183);
+
+vec2 sampleSphericalMap(vec3 v) {
+    vec2 uv = vec2(atan(v.z, v.x), asin(v.y));
+    uv *= invAtan;
+    uv += 0.5;
+    uv.y = 1.0 - uv.y;
+    return uv;
+}
+
+void main() {
+    vec3 normal = normalize(v_position);
+    vec2 uv = sampleSphericalMap(normal);
+    vec3 color = texture(u_equirectangularMap, uv).rgb;
+    color = color * (0.5 + 0.5); 
+    fragColor = vec4(color, 1.0);
+}
+'''
+
+=============================================================
+5. 큐브맵 텍스처 바인딩 후 메인 프레임버퍼에 렌더링
+
+gl.activeTexture(gl.TEXTURE0 + this.textureIndex);
+gl.bindTexture(gl.TEXTURE_CUBE_MAP, this.texture);
+// console.log("After bindTexture - bound texture:", gl.getParameter(gl.TEXTURE_BINDING_CUBE_MAP));
+
+gl.uniformMatrix4fv(this.uniformMvpLocation, false, MVP);
+gl.uniform1i(this.uniformEnvironmentLocation, this.textureIndex);
+// console.log("Set uniform environment to index:", this.textureIndex);
+
+gl.bindVertexArray(this.vertexArray);
+gl.drawArrays(gl.TRIANGLES, 0, 36);
+gl.bindVertexArray(null);
+
+================================================================
+6. IBL(Image-Based Lighting)에 사용
+- Diffuse IBL: 균일한 irradiance로漫反射
+- Specular IBL: Roughness별 mipmap으로 반사
